@@ -59,7 +59,7 @@ public:
 	virtual String _get_source_code() const override;
 	virtual void _set_source_code(const String& p_code) override;
 	virtual Error _reload(bool p_keep_state) override;
-	virtual StringName _get_doc_class_name() const override;
+	//virtual StringName _get_doc_class_name() const override; // <- Not sure why these do not compile
 	virtual TypedArray<Dictionary> _get_documentation() const override;
 	virtual String _get_class_icon_path() const override;
 	virtual bool _has_method(const StringName& p_method) const override;
@@ -124,7 +124,7 @@ public:
 	virtual String _get_source_code() const override;
 	virtual void _set_source_code(const String& p_code) override;
 	virtual Error _reload(bool p_keep_state) override;
-	virtual StringName _get_doc_class_name() const override;
+	//virtual StringName _get_doc_class_name() const override;  // <- Not sure why this doesn't compile
 	virtual TypedArray<Dictionary> _get_documentation() const override;
 	virtual String _get_class_icon_path() const override;
 	virtual bool _has_method(const StringName& p_method) const override;
