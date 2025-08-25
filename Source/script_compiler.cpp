@@ -1862,7 +1862,7 @@ namespace jenova
     #endif // Windows Compilers
 
     // Linux Compilers
-    #ifdef TARGET_PLATFORM_LINUX
+    #if defined(TARGET_PLATFORM_LINUX) || defined(TARGET_PLATFORM_MACOS)
 
     // Jenova GNU Compiler Implementation
     class GNUCompiler : public IJenovaCompiler
@@ -2589,7 +2589,11 @@ namespace jenova
         }
         CompilerModel GetCompilerModel() const
         {
+            #ifdef TARGET_PLATFORM_LINUX
             return CompilerModel::GNUCompiler;
+            #elif TARGET_PLATFORM_MACOS
+            return CompilerModel::AppleClangCompiler;
+            #endif
         }
         bool SolveCompilerSettings(const Dictionary& compilerSettings)
         {
@@ -2645,7 +2649,9 @@ namespace jenova
         std::string godotSDKPath;
         std::string jenovaCachePath;
     };
+    #endif 
 
+    #ifdef TARGET_PLATFORM_LINUX
     // Jenova Clang Compiler Implementation
     class ClangCompiler : public GNUCompiler
     {
@@ -2772,6 +2778,142 @@ namespace jenova
 
     #endif // Linux Compilers
 
+    #ifdef TARGET_PLATFORM_MACOS
+    class AppleClangCompiler : public GNUCompiler
+    {
+        public:
+            AppleClangCompiler() 
+            {   
+            }
+            ~AppleClangCompiler() 
+            {
+            }
+
+            // Override only specific functions
+        bool InitializeCompiler(String compilerInstanceName = "<JenovaAppleClangCompiler>") override
+        {
+            // Initialzie GNU Compiler Settings
+            if (!AppleClangCompiler::InitializeCompiler(compilerInstanceName)) return false;
+            
+            // Initialize Clang Tool Chain Settings
+            internalDefaultSettings["instance_name"]                        = compilerInstanceName;
+            internalDefaultSettings["cpp_compiler_binary"]                  = "clang++"; 
+            internalDefaultSettings["cpp_linker_binary"]                    = "clang++";
+            internalDefaultSettings["cpp_extra_linker"]                     = "-fuse-ld=bfd";
+
+            // All Good
+            return true;
+        }
+        String PreprocessScript(Ref<CPPScript> cppScript, const Dictionary& preprocessorSettings) override
+        {
+           // Get Original Source Code
+            String scriptSourceCode = cppScript->get_source_code();
+
+            // Reset Line Number
+            scriptSourceCode = scriptSourceCode.insert(0, "#line 1\n");
+
+            // Process And Extract Properties
+            jenova::SerializedData propertiesMetadata = jenova::ProcessAndExtractPropertiesFromScript(scriptSourceCode, cppScript->GetScriptIdentity());
+            if (!propertiesMetadata.empty() && propertiesMetadata != "null") jenova::WriteStdStringToFile(AS_STD_STRING(String(preprocessorSettings["PropertyMetadata"])), propertiesMetadata);
+
+            // Preprocessor Definitions [Header]
+            String preprocessorDefinitions = "// Jenova Preprocessor Definitions\n";
+
+            // Preprocessor Definitions [Version]
+            preprocessorDefinitions += String(jenova::Format("#define JENOVA_VERSION \"%d.%d.%d.%d\"\n",
+                jenova::GlobalSettings::JenovaBuildVersion[0], jenova::GlobalSettings::JenovaBuildVersion[1],
+                jenova::GlobalSettings::JenovaBuildVersion[2], jenova::GlobalSettings::JenovaBuildVersion[3]).c_str());
+
+            // Preprocessor Definitions [Compiler]
+            preprocessorDefinitions += "#define JENOVA_COMPILER \"LLVM Clang Compiler\"\n";
+            preprocessorDefinitions += "#define CLANG_COMPILER\n";
+
+            // Preprocessor Definitions [Linking]
+            if (jenova::GlobalStorage::SDKLinkingMode == SDKLinkingMode::Statically) preprocessorDefinitions += "#define JENOVA_SDK_STATIC_LINKING\n";
+            if (jenova::GlobalStorage::SDKLinkingMode == SDKLinkingMode::Dynamically) preprocessorDefinitions += "#define JENOVA_SDK_DYNAMIC_LINKING\n";
+
+            // Preprocessor Definitions [User]
+            String userPreprocessorDefinitions = preprocessorSettings["PreprocessorDefinitions"];
+            PackedStringArray userPreprocessorDefinitionsList = userPreprocessorDefinitions.split(";");
+            for (const auto& definition : userPreprocessorDefinitionsList) if (!definition.is_empty()) preprocessorDefinitions += "#define " + definition + "\n";
+
+            // Add Final Preprocessor Definitions
+            scriptSourceCode = scriptSourceCode.insert(0, preprocessorDefinitions + "\n");
+
+            // Replecements
+            scriptSourceCode = scriptSourceCode.replace(jenova::GlobalSettings::ScriptToolIdentifier, "#define TOOL_SCRIPT");
+            scriptSourceCode = scriptSourceCode.replace(jenova::GlobalSettings::ScriptBlockBeginIdentifier, "namespace JNV_" + cppScript->GetScriptIdentity() + " {");
+            scriptSourceCode = scriptSourceCode.replace(jenova::GlobalSettings::ScriptBlockEndIdentifier, "}; using namespace JNV_" + cppScript->GetScriptIdentity() + ";");
+            scriptSourceCode = scriptSourceCode.replace(" OnReady", " _ready");
+            scriptSourceCode = scriptSourceCode.replace(" OnAwake", " _enter_tree");
+            scriptSourceCode = scriptSourceCode.replace(" OnDestroy", " _exit_tree");
+            scriptSourceCode = scriptSourceCode.replace(" OnProcess", " _process");
+            scriptSourceCode = scriptSourceCode.replace(" OnPhysicsProcess", " _physics_process");
+            scriptSourceCode = scriptSourceCode.replace(" OnInput", " _input");
+            scriptSourceCode = scriptSourceCode.replace(" OnUserInterfaceInput", " _gui_input");
+
+            // Return Preprocessed Source
+            return scriptSourceCode;
+        }
+        CompilerModel GetCompilerModel() const override
+        {
+            return CompilerModel::AppleClangCompiler;
+        }
+        bool SolveCompilerSettings(const Dictionary& compilerSettings) override
+        {
+            // Get Project Path
+            String projectPath = jenova::GetJenovaProjectDirectory();
+                    
+            // Collect Compiler & GodotKit Packages
+            String selectedCompilerPath = jenova::GetInstalledCompilerPathFromPackages(compilerSettings["cpp_toolchain_path"], GetCompilerModel());
+            String selectedGodotKitPath = jenova::GetInstalledGodotKitPathFromPackages(compilerSettings["cpp_godotsdk_path"]);
+
+            // Validate Compiler & GodotKit Packages
+            if (selectedCompilerPath == "Missing-Compiler-1.0.0")
+            {
+                jenova::Error("Jenova Clang Compiler", "No Clang Compiler Detected On Build System, Install At Least One From Package Manager!");
+                return false;
+            }
+            if (selectedGodotKitPath == "Missing-GodotKit-1.0.0")
+            {
+                jenova::Error("Jenova Clang Compiler", "No GodotSDK Detected On Build System, Install At Least One From Package Manager!");
+                return false;
+            }
+
+            // Globalize Paths
+            selectedCompilerPath = ProjectSettings::get_singleton()->globalize_path(selectedCompilerPath);
+            selectedGodotKitPath = ProjectSettings::get_singleton()->globalize_path(selectedGodotKitPath);
+
+            // Solve Compiler Paths
+            this->projectPath = std::filesystem::absolute(AS_STD_STRING(projectPath)).string();
+            this->includePath = std::filesystem::absolute(AS_STD_STRING(selectedCompilerPath + (String)compilerSettings["cpp_include_path"])).string();
+            this->libraryPath = std::filesystem::absolute(AS_STD_STRING(selectedCompilerPath + (String)compilerSettings["cpp_library_path"])).string();
+            this->jenovaPath = std::filesystem::absolute(AS_STD_STRING(projectPath + (String)compilerSettings["cpp_jenova_path"])).string();           
+            this->jenovaSDKPath = std::filesystem::absolute(AS_STD_STRING(projectPath + (String)compilerSettings["cpp_jenovasdk_path"])).string();
+            this->godotSDKPath = std::filesystem::absolute(AS_STD_STRING(selectedGodotKitPath)).string();
+            this->jenovaCachePath = AS_STD_STRING(jenova::GetJenovaCacheDirectory());
+
+            // Store Solved Paths
+            this->internalDefaultSettings["compiler_solved_binary_path"] = String(internalDefaultSettings["cpp_compiler_binary"]);
+            this->internalDefaultSettings["linker_solved_binary_path"] = String(internalDefaultSettings["cpp_linker_binary"]);
+
+            // All Good
+            return true;
+        }
+        private:
+        Dictionary internalDefaultSettings;
+        std::string projectPath;
+        std::string compilerBinaryPath;
+        std::string linkerBinaryPath;
+        std::string includePath;
+        std::string libraryPath;
+        std::string jenovaPath;      
+        std::string jenovaSDKPath;
+        std::string godotSDKPath;
+        std::string jenovaCachePath;
+    };
+    #endif
+
     // Compiler Factory
     IJenovaCompiler* CreateMicrosoftCompiler()
     {
@@ -2795,6 +2937,9 @@ namespace jenova
             return new ClangCompiler();
         #endif
 
+        #ifdef TARGET_PLATFORM_MACOS
+            return new AppleClangCompiler();
+        #endif
 
         // Not Supported
         return nullptr;

@@ -3086,6 +3086,9 @@ namespace jenova
 					if (jenovaCompiler->GetCompilerModel() == CompilerModel::GNUCompiler) intelliSenseMode = "linux-gcc-x64";
 					if (jenovaCompiler->GetCompilerModel() == CompilerModel::ClangCompiler) intelliSenseMode = "linux-clang-x64";
 				#endif
+				#ifdef TARGET_PLATFORM_MACOS
+					if (jenovaCompiler->GetCompilerModel() == CompilerModel::AppleClangCompiler) intelliSenseMode = "macos-clang-arm64";
+				#endif
 				std::string cpp_definitions = AS_STD_STRING(String(jenovaCompiler->GetCompilerOption("cpp_definitions")));
 				std::string extraIncludeDirectories = AS_STD_STRING(String(jenovaCompiler->GetCompilerOption("cpp_extra_include_directories")));
 				std::string forcedHeaders = jenova::GlobalSettings::ForceJenovaSDKHeader ? "JenovaSDK.h;" : "";
@@ -3932,8 +3935,7 @@ namespace jenova
 			bool _supports_platform(const Ref<EditorExportPlatform>& p_platform) const override
 			{
 				// Supports Windows
-				if (p_platform->get_os_name() == "Windows") return true;
-				if (p_platform->get_os_name() == "Linux") return true;
+				if (p_platform->get_os_name() == "Windows" || p_platform->get_os_name() == "Linux" || p_platform->get_os_name() == "MacOS") return true;
 
 				// Unsupported Platform
 				return false;
@@ -3999,7 +4001,7 @@ namespace jenova
 				// Create Jenova Export Directory
 				std::string jenovaExportDirectory = "./";
 				if (QUERY_PLATFORM(Windows)) jenovaExportDirectory = exportDirectory;
-				if (QUERY_PLATFORM(Linux)) jenovaExportDirectory = exportDirectory + "/Jenova/";
+				if (QUERY_PLATFORM(Linux) || QUERY_PLATFORM(MacOS)) jenovaExportDirectory = exportDirectory + "/Jenova/";
 				if (!std::filesystem::exists(jenovaExportDirectory)) std::filesystem::create_directories(jenovaExportDirectory);
 
 				// Verbose Addon Export
@@ -6596,7 +6598,10 @@ namespace jenova
 
 		// MacOS Compilers
 #ifdef TARGET_PLATFORM_MACOS
-		// TODO
+		if (compilerModel == jenova::CompilerModel::AppleClangCompiler)
+		{
+			// TODO
+		}
 #endif
 
 		// Unknown Symbol Signature
