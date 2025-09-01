@@ -163,6 +163,8 @@ namespace jenova
 			const jenova::CompilerModel CompilerDefaultModel = jenova::CompilerModel::MicrosoftCompiler;
 			#elif defined(TARGET_PLATFORM_LINUX)
 			const jenova::CompilerModel CompilerDefaultModel = jenova::CompilerModel::GNUCompiler;
+			#elif defined(TARGET_PLATFORM_MACOS)
+			const jenova::CompilerModel CompilerDefaultModel = jenova::CompilerModel::AppleClangCompiler;
 			#else
 			const jenova::CompilerModel CompilerDefaultModel = jenova::CompilerModel::Unspecified;
 			#endif
@@ -2184,10 +2186,9 @@ namespace jenova
 					jenovaCompiler = jenova::CreateMinGWCompiler(true);
 					jenova::Output("New Minimalist GNU for Windows (MinGW) Clang Compiler Implemented at [color=#44e376]%p[/color]", jenovaCompiler);
 					break;
-				#endif
 
 				// Linux Compilers
-				#ifdef TARGET_PLATFORM_LINUX
+				#elif TARGET_PLATFORM_LINUX
 				case jenova::CompilerModel::GNUCompiler:
 					jenova::Output("Creating GNU C++ (GCC) Compiler...");
 					jenovaCompiler = jenova::CreateGNUCompiler();
@@ -2198,13 +2199,20 @@ namespace jenova
 					jenovaCompiler = jenova::CreateClangCompiler();
 					jenova::Output("New LLVM Clang (Linux) Compiler Implemented at [color=#44e376]%p[/color]", jenovaCompiler);
 					break;
-				#endif
 
+				#elif TARGET_PLATFORM_MACOS
+				case jenova::CompilerModel::AppleClangCompiler:
+					jenova::Output("Creating Apple Clang (macOS) Compiler...");
+					jenovaCompiler = jenova::CreateClangCompiler();
+					jenova::Output("New Apple Clang (macOS) Compiler Implemented at [color=#44e376]%p[/color]", jenovaCompiler);
+					break;
+				#else
 				// Unknown Compiler
 				case jenova::CompilerModel::Unspecified:
 				default:
 					jenova::Error("Jenova Builder", "Invalid Compiler Model detected, Build aborted.");
 					return false;
+				#endif
 				}
 
 				// Validate Compiler
@@ -6426,7 +6434,15 @@ namespace jenova
 
 		// MacOS Compilers
 #ifdef TARGET_PLATFORM_MACOS
-		// TODO
+		// Demangle GCC/Clang Function
+			if (compilerModel == jenova::CompilerModel::AppleClangCompiler)
+			{
+				int status = -1;
+				char* demangled = abi::__cxa_demangle(mangledName.c_str(), nullptr, nullptr, &status);
+				std::string result = (status == 0 && demangled) ? std::string(demangled) : "Unknown";
+				std::free(demangled);
+				return result;
+			}
 #endif
 		
 		// Unknown Compiler, Return Empty String
@@ -6550,7 +6566,14 @@ namespace jenova
 
 		// MacOS Compilers
 #ifdef TARGET_PLATFORM_MACOS
-		// TODO
+		if (compilerModel == jenova::CompilerModel::AppleClangCompiler)
+			{
+				std::regex propRegex(R"(^\s*([^\s]+\s*\*?)\s*\w+::\w+$)");
+				std::smatch match;
+				if (std::regex_search(propertySignature, match, propRegex)) return jenova::ReplaceAllMatchesWithStringAndReturn(match[1], " ", "");
+				return std::string();
+			}
+
 #endif
 		
 		// Unknown Compiler, Return Empty String

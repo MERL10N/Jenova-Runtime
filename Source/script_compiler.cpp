@@ -2032,6 +2032,7 @@ namespace jenova
                 std::string dirs = AS_STD_STRING(additionalDirs);
                 if (dirs.empty()) return "";
                 if (dirs.back() == ';') dirs.pop_back();
+                
                 std::vector<std::string> dirArray;
                 size_t start = 0;
                 size_t end = dirs.find(';');
@@ -2792,14 +2793,28 @@ namespace jenova
             // Override only specific functions
         bool InitializeCompiler(String compilerInstanceName = "<JenovaAppleClangCompiler>") override
         {
-            // Initialzie GNU Compiler Settings
-            if (!AppleClangCompiler::InitializeCompiler(compilerInstanceName)) return false;
+            if (!GNUCompiler::InitializeCompiler(compilerInstanceName)) return false;
             
             // Initialize Clang Tool Chain Settings
             internalDefaultSettings["instance_name"]                        = compilerInstanceName;
             internalDefaultSettings["cpp_compiler_binary"]                  = "clang++"; 
             internalDefaultSettings["cpp_linker_binary"]                    = "clang++";
-            internalDefaultSettings["cpp_extra_linker"]                     = "-fuse-ld=bfd";
+            
+            // Override defaults for macOS
+            internalDefaultSettings["cpp_output_module"] = "Jenova.Module.dylib";
+            internalDefaultSettings["cpp_output_map"] = "Jenova.Module.map";
+            internalDefaultSettings["cpp_machine_architecture"] = "arm64";
+            
+
+            // Check if Clang is installed on macOS
+            bool hasXRunClang = (jenova::ExecuteCommand("", "xcrun --find clang++ >/dev/null 2>&1") == 0);
+            bool hasPathClang = (jenova::ExecuteCommand("", "clang++ --version >/dev/null 2>&1") == 0);
+
+            if (!hasXRunClang || !hasPathClang){
+                // Clang is not installed
+                jenova::Error("Jenova Apple Clang Compiler", "No Clang Compiler Detected On Build System, Please Install Xcode Command Line Tools!");
+                return false;
+            }
 
             // All Good
             return true;
@@ -2871,8 +2886,31 @@ namespace jenova
             // Validate Compiler & GodotKit Packages
             if (selectedCompilerPath == "Missing-Compiler-1.0.0")
             {
-                jenova::Error("Jenova Clang Compiler", "No Clang Compiler Detected On Build System, Install At Least One From Package Manager!");
-                return false;
+                // Check if Clang is installed on macOS
+                bool hasXRunClang = (jenova::ExecuteCommand("", "xcrun --find clang++ >/dev/null 2>&1") == 0);
+                bool hasPathClang = (jenova::ExecuteCommand("", "clang++ --version >/dev/null 2>&1") == 0);
+
+                if (!hasXRunClang && !hasPathClang)
+                {
+                    // Clang is not installed
+                    jenova::Error("Jenova Apple Clang Compiler", "No Clang Compiler Detected On Build System, Please Install Xcode Command Line Tools!");
+                    return false;
+                }
+                 // Solve Compiler Paths
+                this->projectPath = std::filesystem::absolute(AS_STD_STRING(projectPath)).string();
+                this->includePath = std::filesystem::absolute(AS_STD_STRING(selectedCompilerPath + (String)compilerSettings["cpp_include_path"])).string();
+                this->libraryPath = std::filesystem::absolute(AS_STD_STRING(selectedCompilerPath + (String)compilerSettings["cpp_library_path"])).string();
+                this->jenovaPath = std::filesystem::absolute(AS_STD_STRING(projectPath + (String)compilerSettings["cpp_jenova_path"])).string();           
+                this->jenovaSDKPath = std::filesystem::absolute(AS_STD_STRING(projectPath + (String)compilerSettings["cpp_jenovasdk_path"])).string();
+                this->godotSDKPath = std::filesystem::absolute(AS_STD_STRING(selectedGodotKitPath)).string();
+                this->jenovaCachePath = AS_STD_STRING(jenova::GetJenovaCacheDirectory());
+
+                // Store Solved Paths
+                this->internalDefaultSettings["compiler_solved_binary_path"] = String(internalDefaultSettings["cpp_compiler_binary"]);
+                this->internalDefaultSettings["linker_solved_binary_path"] = String(internalDefaultSettings["cpp_linker_binary"]);
+
+            // All Good
+            return true;
             }
             if (selectedGodotKitPath == "Missing-GodotKit-1.0.0")
             {
