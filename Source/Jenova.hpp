@@ -20,13 +20,13 @@
 #define APP_COMPANYNAME					"MemarDesign™ LLC."
 #define APP_DESCRIPTION					"Real-Time C++ Scripting System for Godot Game Engine, Developed By Hamid.Memar."
 #define APP_COPYRIGHT					"Copyright MemarDesign™ LLC. (©) 2024-2025, All Rights Reserved."
-#define APP_VERSION						"0.3.8.0"
+#define APP_VERSION						"0.3.8.3"
 #define APP_VERSION_MIDDLEFIX			" "
 #define APP_VERSION_POSTFIX				"Beta"
 #define APP_VERSION_SINGLECHAR			"b"
-#define APP_VERSION_DATA				0, 3, 8, 0
+#define APP_VERSION_DATA				0, 3, 8, 3
 #define APP_VERSION_BUILD				"0"
-#define APP_VERSION_NAME				"Sigma"
+#define APP_VERSION_NAME				"Halo"
 
 #ifndef NO_JENOVA_RUNTIME_SDK
 
@@ -229,6 +229,7 @@
 #include <classes/image.hpp>
 #include <classes/image_texture.hpp>
 #include <classes/semaphore.hpp>
+#include <classes/performance.hpp>
 #include <classes/script.hpp>
 #include <classes/script_editor.hpp>
 #include <classes/script_editor_base.hpp>
@@ -319,7 +320,7 @@ using namespace godot;
 #define CREATE_GLOBAL_TEMPLATE(a,b,c)		JenovaTemplateManager::get_singleton()->RegisterNewGlobalScriptTemplate(a, CODE_TEMPLATE(b), c);
 #define CREATE_CLASS_TEMPLATE(a,b,c,d)		JenovaTemplateManager::get_singleton()->RegisterNewClassScriptTemplate(a, b, CODE_TEMPLATE(c), d);
 #define QUERY_ENGINE_MODE(mode)				(jenova::GlobalStorage::CurrentEngineMode == jenova::EngineMode::mode)
-#define QUERY_SDK_LINKING_MODE(mode)		(jenova::GlobalStorage::SDKLinkingMode == jenova::SDKLinkingMode::mode)
+#define QUERY_PROFILING_MODE(mode)			(jenova::GlobalStorage::CurrentProfilingMode == jenova::ProfilingMode::mode)
 #define QUERY_PLATFORM(platform)			(TARGET_PLATFORM_CURRENT == jenova::TargetPlatform::platform)
 #define SCALED(value)						((double)value * (double)scaleFactor)
 
@@ -451,8 +452,15 @@ namespace jenova
 	{
 		AsmJIT,
 		TinyCC,
-		AkiraJIT,
-		SecureAngel,
+		LibFFI,
+		Unknown
+	};
+	enum class ProfilingMode
+	{
+		Disabled,
+		Echo,
+		Sentinel,
+		Monitor,
 		Unknown
 	};
 	enum class BuildAndRunMode
@@ -543,12 +551,6 @@ namespace jenova
 	{
 		Actual,
 		Virtual
-	};
-	enum class SDKLinkingMode
-	{
-		None,
-		Dynamically,
-		Statically
 	};
 	enum class ModuleCacheType : short
 	{
@@ -697,6 +699,11 @@ namespace jenova
 		GDExtensionInitialization*				godotExtensionInitialization;
 		JenovaSDKInterface						jenovaSDKInterface = nullptr;
 	};
+	struct PerformanceSample
+	{
+		double timestampStart;
+		double timestampEnd;
+	};
 	struct VisualStudioInstance
 	{
 		String instanceName		= "";
@@ -844,10 +851,10 @@ namespace jenova
 	{
 		extern ExtensionInitializerData							ExtensionInitData;
 		extern jenova::EngineMode								CurrentEngineMode;
+		extern jenova::ProfilingMode							CurrentProfilingMode;
 		extern jenova::BuildAndRunMode							CurrentBuildAndRunMode;
 		extern jenova::ChangesTriggerMode						CurrentChangesTriggerMode;
 		extern jenova::EditorVerboseOutput						CurrentEditorVerboseOutput;
-		extern jenova::SDKLinkingMode							SDKLinkingMode;
 		extern std::string										CurrentJenovaCacheDirectory;
 		extern std::string										CurrentJenovaGeneratedConfiguration;
 		extern std::string										CurrentJenovaRuntimeModulePath;
@@ -855,6 +862,7 @@ namespace jenova
 		extern bool												UseHotReloadAtRuntime;
 		extern bool												UseMonospaceFontForTerminal;
 		extern bool												UseManagedSafeExecution;
+		extern bool												UseBuiltinSDK;
 		extern bool												RefreshSceneTreeAfterBuild;
 		extern int												TerminalDefaultFontSize;
 	}
@@ -912,6 +920,7 @@ namespace jenova
 	std::string GenerateRandomHashString();
 	std::string GenerateTerminalLogTime();
 	jenova::EngineMode GetCurrentEngineInstanceMode();
+	bool IsEngineRuntimeExport();
 	String GetCurrentEngineInstanceModeAsString();
 	Ref<ImageTexture> CreateImageTextureFromByteArray(const uint8_t* imageDataPtr, size_t imageDataSize, ImageCreationFormat imageFormat = ImageCreationFormat::PNG);
 	Ref<ImageTexture> CreateImageTextureFromByteArrayEx(const uint8_t* imageDataPtr, size_t imageDataSize, const Vector2i& imageSize = Vector2i(), ImageCreationFormat imageFormat = ImageCreationFormat::PNG);
@@ -1009,6 +1018,7 @@ namespace jenova
 	void* AllocateVariantBasedProperty(const std::string& typeName);
 	bool SetPropertyPointerValueFromVariant(jenova::PropertyPointer propertyPointer, const Variant& variantValue);
 	bool GetVariantFromPropertyPointer(const jenova::PropertyPointer propertyPointer, godot::Variant& variantValue, const Variant::Type& variantType);
+	Variant CreateDefaultVariantFromType(Variant::Type variantType);
 	std::string ParseClassNameFromScriptSource(const std::string& sourceCode);
 	jenova::ScriptFileState BackupScriptFileState(const std::string& scriptFilePath);
 	bool RestoreScriptFileState(const std::string& scriptFilePath, const jenova::ScriptFileState& scriptFileState);
@@ -1069,6 +1079,7 @@ namespace jenova
 #include "script_resource.h"
 #include "script_templates.h"
 #include "script_language.h"
+#include "script_profiler.h"
 #include "script_interpreter.h"
 #include "script_instance_base.h"
 #include "script_instance.h"

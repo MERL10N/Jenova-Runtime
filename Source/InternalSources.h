@@ -4,12 +4,15 @@ static constexpr char JenovaModuleInitializerCPP[] = R"(
 
 	// Imports
 	#include <vector>
+	#include <algorithm>
 
 	// Godot SDK
 	#include <Godot/godot.hpp>
 
 	// Jenova SDK
+	#ifndef JENOVA_SDK
 	#include <JenovaSDK.h>
+	#endif
 
 	// Namespaces
 	using namespace godot;
@@ -90,7 +93,7 @@ static constexpr char JenovaModuleInitializerCPP[] = R"(
 	JENOVA_EXPORT bool _JenovaBoot()
 	{
 		// Execute Registered Boot Functions
-		for (const void* event : bootFunctions) reinterpret_cast<void(*)()>(event)();
+		for (void* event : bootFunctions) reinterpret_cast<void(*)()>(event)();
 
 		// All Good
 		return true;
@@ -98,7 +101,7 @@ static constexpr char JenovaModuleInitializerCPP[] = R"(
 	JENOVA_EXPORT bool _JenovaShutdown()
 	{
 		// Execute Registered Shutdown Functions
-		for (const void* event : shutdownFunctions) reinterpret_cast<void(*)()>(event)();
+		for (void* event : shutdownFunctions) reinterpret_cast<void(*)()>(event)();
 
 		// All Good
 		return true;
