@@ -1862,7 +1862,7 @@ namespace jenova
     #endif // Windows Compilers
 
     // Linux Compilers
-    #if defined(TARGET_PLATFORM_LINUX) || defined(TARGET_PLATFORM_MACOS)
+    #if defined(TARGET_PLATFORM_LINUX)
 
     // Jenova GNU Compiler Implementation
     class GNUCompiler : public IJenovaCompiler
@@ -2032,7 +2032,7 @@ namespace jenova
                 std::string dirs = AS_STD_STRING(additionalDirs);
                 if (dirs.empty()) return "";
                 if (dirs.back() == ';') dirs.pop_back();
-                
+
                 std::vector<std::string> dirArray;
                 size_t start = 0;
                 size_t end = dirs.find(';');
@@ -2590,11 +2590,7 @@ namespace jenova
         }
         CompilerModel GetCompilerModel() const
         {
-            #ifdef TARGET_PLATFORM_LINUX
             return CompilerModel::GNUCompiler;
-            #elif TARGET_PLATFORM_MACOS
-            return CompilerModel::AppleClangCompiler;
-            #endif
         }
         bool SolveCompilerSettings(const Dictionary& compilerSettings)
         {
@@ -2780,7 +2776,7 @@ namespace jenova
     #endif // Linux Compilers
 
     #ifdef TARGET_PLATFORM_MACOS
-    class AppleClangCompiler : public GNUCompiler
+    class AppleClangCompiler : public IJenovaCompiler
     {
         public:
             AppleClangCompiler() 
@@ -2793,24 +2789,43 @@ namespace jenova
             // Override only specific functions
         bool InitializeCompiler(String compilerInstanceName = "<JenovaAppleClangCompiler>") override
         {
-            if (!GNUCompiler::InitializeCompiler(compilerInstanceName)) return false;
             
             // Initialize Clang Tool Chain Settings
             internalDefaultSettings["instance_name"]                        = compilerInstanceName;
             internalDefaultSettings["cpp_compiler_binary"]                  = "clang++"; 
             internalDefaultSettings["cpp_linker_binary"]                    = "clang++";
+            internalDefaultSettings["cpp_include_path"]                     = "/include";                           // Default include path
+            internalDefaultSettings["cpp_library_path"]                     = "/lib";                               // Default library path
+            internalDefaultSettings["cpp_symbols_path"]                     = "/Symbols";
+            internalDefaultSettings["cpp_jenova_path"]                      = "/Jenova/";        
+            internalDefaultSettings["cpp_jenovasdk_path"]                   = "/Jenova/JenovaSDK";
+            internalDefaultSettings["cpp_godotsdk_path"]                    = "/Jenova/GodotSDK";                   // Placeholder
+
+            // GNU Compiler Settings
+            internalDefaultSettings["cpp_language_standards"]               = "cpp20";                              // -std=c++20
+            internalDefaultSettings["cpp_open_mp_support"]                  = true;                                 // -fopenmp
+            internalDefaultSettings["cpp_debug_database"]                   = true;                                 // -g
+            internalDefaultSettings["cpp_extra_compiler"]                   = "-O2 -march=native";                  // Extra Compiler Options
+            internalDefaultSettings["cpp_definitions"]                      = "TYPED_METHOD_BIND;HOT_RELOAD_ENABLED";
             
             // Override defaults for macOS
             internalDefaultSettings["cpp_output_module"] = "Jenova.Module.dylib";
             internalDefaultSettings["cpp_output_map"] = "Jenova.Module.map";
             internalDefaultSettings["cpp_machine_architecture"] = "arm64";
+            internalDefaultSettings["cpp_machine_pe_type"]   = "dylib";
+            internalDefaultSettings["cpp_dynamic_base"]      = true;        // -fPIC
+            internalDefaultSettings["cpp_debug_symbol"]      = true;        // -ggdb (lldb is default on macOS but flag is fine)
+            internalDefaultSettings["cpp_strip_symbol"]      = false;
+            internalDefaultSettings["cpp_statics_libs"]      = "";          // no -static-libstdc++ / -static-libgcc on macOS
+            internalDefaultSettings["cpp_extra_linker"]      = "-arch arm64";
+
             
 
             // Check if Clang is installed on macOS
             bool hasXRunClang = (jenova::ExecuteCommand("", "xcrun --find clang++ >/dev/null 2>&1") == 0);
             bool hasPathClang = (jenova::ExecuteCommand("", "clang++ --version >/dev/null 2>&1") == 0);
 
-            if (!hasXRunClang || !hasPathClang){
+            if (!hasXRunClang && !hasPathClang){
                 // Clang is not installed
                 jenova::Error("Jenova Apple Clang Compiler", "No Clang Compiler Detected On Build System, Please Install Xcode Command Line Tools!");
                 return false;
@@ -2819,6 +2834,13 @@ namespace jenova
             // All Good
             return true;
         }
+
+        bool ReleaseCompiler() override
+        {
+            internalDefaultSettings.clear();
+            return true;
+        }
+
         String PreprocessScript(Ref<CPPScript> cppScript, const Dictionary& preprocessorSettings) override
         {
            // Get Original Source Code
@@ -2870,9 +2892,652 @@ namespace jenova
             // Return Preprocessed Source
             return scriptSourceCode;
         }
+        CompileResult CompileScript(const String sourceCode)
+        {
+            return CompileScriptWithCustomSettings(sourceCode, this->internalDefaultSettings);
+        }
+        CompileResult CompileScriptWithCustomSettings(const String sourceCode, const Dictionary& compilerSettings)
+        {
+            CompileResult result;
+            result.hasError = true;
+            result.compileError = "This Compiler does not support Compilation from Memory!";
+            return result;
+        }
+        CompileResult CompileScriptFromFile(const String scriptFilePath)
+        {
+            return CompileScriptFromFileWithCustomSettings(scriptFilePath, this->internalDefaultSettings);
+        }
+        CompileResult CompileScriptFromFileWithCustomSettings(const String scriptFilePath, const Dictionary& compilerSettings)
+        {
+            CompileResult result;
+            result.hasError = true;
+            result.compileError = "The requested compilation method is currently Not Implemented.";
+            return result;
+        }
+        CompileResult CompileScriptModuleContainer(const ScriptModuleContainer& scriptModulesContainer)
+        {
+            return CompileScriptModuleWithCustomSettingsContainer(scriptModulesContainer, this->internalDefaultSettings);
+        }
+
         CompilerModel GetCompilerModel() const override
         {
             return CompilerModel::AppleClangCompiler;
+        }
+        CompileResult CompileScriptModuleWithCustomSettingsContainer(const ScriptModuleContainer& scriptModulesContainer, const Dictionary& compilerSettings)
+        {
+            // Create Compiler Result
+            CompileResult result;
+
+            // Solve Settings [Cache]
+            if (!SolveCompilerSettings(compilerSettings))
+            {
+                result.compileResult = false;
+                result.hasError = true;
+                result.compileError = "C666 : Unable to Solve Compiler Settings.";
+                return result;
+            }
+            
+            // Utilities
+            auto GeneratePreprocessDefinitions = [](const godot::String& defsSetting) -> std::string
+            {
+                std::string defs = AS_STD_STRING(defsSetting);
+                if (defs.empty()) return "";
+                if (defs.back() == ';') defs.pop_back();
+                std::vector<std::string> defsArray;
+                size_t start = 0;
+                size_t end = defs.find(';');
+                while (end != std::string::npos) {
+                    defsArray.push_back(defs.substr(start, end - start));
+                    start = end + 1;
+                    end = defs.find(';', start);
+                }
+                defsArray.push_back(defs.substr(start));
+                std::string result;
+                for (const auto& def : defsArray) result += "-D" + def + " ";
+                return result;
+            };
+            auto GenerateAdditionalIncludeDirectories = [](const godot::String& additionalDirs) -> std::string
+            {
+                std::string dirs = AS_STD_STRING(additionalDirs);
+                if (dirs.empty()) return "";
+                if (dirs.back() == ';') dirs.pop_back();
+
+                std::vector<std::string> dirArray;
+                size_t start = 0;
+                size_t end = dirs.find(';');
+                while (end != std::string::npos)
+                {
+                    dirArray.push_back(dirs.substr(start, end - start));
+                    start = end + 1;
+                    end = dirs.find(';', start);
+                }
+                dirArray.push_back(dirs.substr(start));
+                std::string result;
+                for (const auto& dir : dirArray) result += "-I" + dir + " ";
+                return result;
+            };
+
+            // Load Cache if Exists
+            bool buildCacheFileFound = false;
+            jenova::json_t buildCacheDatabase;
+            if (!std::filesystem::exists(this->jenovaCachePath + jenova::GlobalSettings::JenovaBuildCacheDatabaseFile))
+            {
+                // Cache Doesn't Exist, Generate It
+                std::string cacheDatabaseFilePath = this->jenovaCachePath + jenova::GlobalSettings::JenovaBuildCacheDatabaseFile;
+                if (!jenova::CreateBuildCacheDatabase(cacheDatabaseFilePath, scriptModulesContainer.scriptModules, compilerSettings["CppHeaderFiles"], true))
+                {
+                    result.compileResult = false;
+                    result.hasError = true;
+                    result.compileError = "C670 : Failed to Generate Build Cache Database.";
+                    return result;
+                }
+            }
+
+            // Parse Cache File
+            try
+            {
+                std::ifstream buildCacheDatabaseReader(this->jenovaCachePath + jenova::GlobalSettings::JenovaBuildCacheDatabaseFile, std::ios::binary);
+                std::string buildCacheDatabaseContent(std::istreambuf_iterator<char>(buildCacheDatabaseReader), {});
+                if (!buildCacheDatabaseContent.empty())
+                {
+                    buildCacheDatabase = jenova::json_t::parse(buildCacheDatabaseContent);
+                    buildCacheFileFound = true;
+                }
+            }
+            catch (const std::exception&)
+            {
+                result.compileResult = false;
+                result.hasError = true;
+                result.compileError = "C671 : Failed to Parse Build Cache Database.";
+                return result;
+            }
+
+            // Check If Any Changes Applied to Headers
+            if (buildCacheDatabase.contains("Headers"))
+            {
+                // Detect Changes
+                bool detectedHeaderChanges = false;
+                PackedStringArray cppHeaderFiles = compilerSettings["CppHeaderFiles"];
+                for (const auto& cppHeaderFile : cppHeaderFiles)
+                {
+                    String cppHeaderUID = jenova::GenerateStandardUIDFromPath(cppHeaderFile);
+                    String cppHeaderHash = jenova::GenerateMD5HashFromFile(cppHeaderFile);
+                    if (buildCacheDatabase["Headers"].contains(AS_STD_STRING(cppHeaderUID)))
+                    {
+                        if (AS_STD_STRING(cppHeaderHash) != buildCacheDatabase["Headers"][AS_STD_STRING(cppHeaderUID)].get<std::string>())
+                        {
+                            detectedHeaderChanges = true;
+                            break;
+                        }
+                    }
+                }
+                if (buildCacheDatabase.contains("HeaderCount"))
+                {
+                    int headerCount = buildCacheDatabase["HeaderCount"].get<int>();
+                    if (headerCount != cppHeaderFiles.size()) detectedHeaderChanges = true;
+                }
+
+                // If Contains Changes, Reset All Script Cache
+                if (detectedHeaderChanges)
+                {
+                    if (buildCacheDatabase.contains("Modules"))
+                    {
+                        for (auto& scriptModule : buildCacheDatabase["Modules"].items())
+                        {
+                            scriptModule.value() = "No Hash";
+                        }
+                    }
+                }
+            }
+
+            // Create Task List for Parallel Compilation
+            std::vector<TaskID> taskIDs; size_t taskIndex = 0;
+            std::vector<int> taskResults(scriptModulesContainer.scriptModules.size(), -1);
+            for (const auto& scriptModule : scriptModulesContainer.scriptModules)
+            {
+                // Skip If File Hash Didn't Change
+                if (buildCacheDatabase.contains("Modules"))
+                {
+                    if (buildCacheDatabase["Modules"].contains(AS_STD_STRING(scriptModule.scriptUID)))
+                    {
+                        if (AS_STD_STRING(scriptModule.scriptHash) == buildCacheDatabase["Modules"][AS_STD_STRING(scriptModule.scriptUID)].get<std::string>()) 
+                            continue;
+                    }
+                }
+
+                const std::string fileExtension = std::filesystem::path(AS_STD_STRING(scriptModule.scriptCacheFile)).extension().string();
+    
+                if (fileExtension != ".cpp" && fileExtension != ".cxx" && fileExtension != ".cc")
+                {
+                    continue; // skip headers and unknown types
+                }
+
+                // Generate Command for Each Script Module
+                std::string compilerArgument = AS_STD_STRING(String(compilerSettings["cpp_compiler_binary"]));
+
+                // Compile Without Linking
+                compilerArgument += " -c ";
+
+                // Language Standards
+                if (String(compilerSettings["cpp_language_standards"]) == "cpp20") compilerArgument += "-std=c++20 ";
+                if (String(compilerSettings["cpp_language_standards"]) == "cpp17") compilerArgument += "-std=c++17 ";
+
+                // Debug Symbols
+                if (bool(compilerSettings["cpp_debug_database"])) compilerArgument += "-g ";
+
+                // Dynamic Base
+                if (bool(compilerSettings["cpp_dynamic_base"])) compilerArgument += "-fPIC ";
+
+                // Extra Compiler Flags
+                compilerArgument += AS_STD_STRING(String(compilerSettings["cpp_extra_compiler"])) + " ";
+
+                // Preprocessor Definitions
+                compilerArgument += GeneratePreprocessDefinitions(compilerSettings["cpp_definitions"]);
+
+                // Include Paths
+                compilerArgument += "-I./ ";
+                compilerArgument += "-I\"" + this->includePath   + "\" ";
+                compilerArgument += "-I\"" + this->jenovaSDKPath + "\" ";
+
+                // godot-cpp (Godot 4.x) headers live under these two subfolders:
+                compilerArgument += "-I\"" + this->godotSDKPath + "/godot-cpp/include\" ";
+                compilerArgument += "-I\"" + this->godotSDKPath + "/godot-cpp/gen/include\" ";
+
+                // Force Include JenovaSDK Header
+                if (jenova::GlobalSettings::ForceJenovaSDKHeader) compilerArgument += "-include JenovaSDK.h ";
+
+                // Add Additional Include Directories
+                compilerArgument += GenerateAdditionalIncludeDirectories(compilerSettings["cpp_extra_include_directories"]);
+
+                // Add Source File
+                compilerArgument += "\"" + AS_STD_STRING(scriptModule.scriptCacheFile) + "\" ";
+
+                // Specify Object File Output
+                compilerArgument += "-o \"" + AS_STD_STRING(scriptModule.scriptObjectFile) + "\" ";
+
+                // Dump Compiler Command If Developer Mode Enabled (Apple Clang)
+                if (jenova::GlobalStorage::DeveloperModeActivated)
+                {
+                    jenova::WriteStdStringToFile(this->jenovaCachePath + "CompilerCommand.txt", compilerArgument);
+                }
+                
+                // Store Task Index for Results
+                size_t currentTaskIndex = taskIndex++;
+                taskIDs.push_back(JenovaTaskSystem::InitiateTask([compilerArgument, &taskResults, currentTaskIndex, scriptModule]()
+                {
+                    // Run the compiler command using a process and capture its output
+                    int pipefd[2];
+                    if (pipe(pipefd) == -1)
+                    {
+                        taskResults[currentTaskIndex] = 1; // Non-zero indicates failure
+                        jenova::Output("Failed to create pipe for capturing output.");
+                        return;
+                    }
+
+                    pid_t pid = fork();
+                    if (pid == -1)
+                    {
+                        close(pipefd[0]);
+                        close(pipefd[1]);
+                        taskResults[currentTaskIndex] = 1; // Non-zero indicates failure
+                        jenova::Output("Failed to fork process for compilation.");
+                        return;
+                    }
+
+                    if (pid == 0)
+                    {
+                        // Child process: Redirect output to pipe
+                        dup2(pipefd[1], STDOUT_FILENO);
+                        dup2(pipefd[1], STDERR_FILENO);
+                        close(pipefd[0]); // Close unused read end
+                        close(pipefd[1]);
+
+                        // Execute compiler command
+                        setenv("LANG", "C.UTF-8", 1);
+                        setenv("LC_ALL", "C.UTF-8", 1);
+                        execl("/bin/sh", "sh", "-c", compilerArgument.c_str(), nullptr);
+                    }
+                    else
+                    {
+                        // Parent process: Capture output
+                        close(pipefd[1]); // Close unused write end
+                        char buffer[128];
+                        std::string resultOutput;
+
+                        // Read output from the pipe
+                        ssize_t bytesRead;
+                        while ((bytesRead = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0)
+                        {
+                            buffer[bytesRead] = '\0';
+                            resultOutput += buffer;
+                        }
+
+                        // Close the read end
+                        close(pipefd[0]); 
+
+                        // Wait for the child process to finish
+                        int status;
+                        waitpid(pid, &status, 0);
+                        taskResults[currentTaskIndex] = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+
+                        // Log the output
+                        if (!resultOutput.empty())
+                        {
+                            // Replace UTF-8 Smart Quotes With ASCII Equivalents
+                            std::string sanitized;
+                            for (size_t i = 0; i < resultOutput.size(); i++)
+                            {
+                                if (i + 2 < resultOutput.size() && static_cast<unsigned char>(resultOutput[i]) == 0xE2 && static_cast<unsigned char>(resultOutput[i + 1]) == 0x80)
+                                {
+                                    if (static_cast<unsigned char>(resultOutput[i + 2]) == 0x98 || static_cast<unsigned char>(resultOutput[i + 2]) == 0x99)
+                                    {
+                                        sanitized += '\'';
+                                        i += 2;
+                                        continue;
+                                    }
+                                }
+                                sanitized += resultOutput[i];
+                            }
+                            jenova::Error("Jenova Compiler", "Compile Error : %s", sanitized.c_str());
+                        }
+                        if (taskResults[currentTaskIndex] != 0)
+                        {
+                            jenova::Output("Script [%s] Compilation Failed.", AS_C_STRING(scriptModule.scriptHash));
+                        }
+                    }
+                }));
+
+                // Increment Successfully Compiled Scripts
+                result.scriptsCount++;
+
+            }
+
+            // Skip Compile If Source Count is 0
+            if (result.scriptsCount == 0)
+            {
+                result.compileResult = true;
+                result.hasError = false;
+                result.compileVerbose = "Cache System Detected No Script Requires to be Compiled.";
+                return result;
+            }
+
+            // Wait for All Tasks to Complete
+            for (const auto& taskID : taskIDs)
+            {
+                while (!JenovaTaskSystem::IsTaskComplete(taskID))
+                {
+                    std::this_thread::yield();
+                }
+                JenovaTaskSystem::ClearTask(taskID);
+            }
+
+            // Aggregate Results
+            for (size_t i = 0; i < taskResults.size(); i++)
+            {
+                // Skip tasks not executed (cached scripts)
+                if (taskResults[i] == -1) continue;
+
+                // Check for failures
+                if (taskResults[i] != 0)
+                {
+                    result.compileResult = false;
+                    result.hasError = true;
+                    result.compileError = "C667 : Compilation Failed for One or More Script Modules.";
+                    return result;
+                }
+            }
+
+            // Compilation Successful
+            result.compileResult = true;
+            result.hasError = false;
+            result.compileVerbose = "Compilation Successful for All Script Modules.";
+
+            return result;
+        }
+        BuildResult BuildFinalModule(const jenova::ModuleList& scriptModules)
+        {
+            return BuildFinalModuleWithCustomSettings(scriptModules, internalDefaultSettings);
+        }
+        BuildResult BuildFinalModuleWithCustomSettings(const jenova::ModuleList& scriptModules, const Dictionary& linkerSettings)
+        {
+            // Create Build Result
+            BuildResult result;
+
+            // Solve Settings [Cache]
+            if (!SolveCompilerSettings(linkerSettings))
+            {
+                result.buildResult = false;
+                result.hasError = true;
+                result.buildError = "L666 : Unable to Solve Linker Settings.";
+                return result;
+            }
+
+            // Set Output Directory Path on Build Result
+            result.buildPath = this->jenovaCachePath;
+
+            // Set Compiler Model
+            result.compilerModel = this->GetCompilerModel();
+
+            // Set Debug Information Flag
+            result.hasDebugInformation = bool(linkerSettings["cpp_debug_symbol"]);
+
+            // Generate Output Module Path
+            std::string outputModule = this->jenovaCachePath + AS_STD_STRING((String)linkerSettings["cpp_output_module"]);
+            std::string outputMap = this->jenovaCachePath + AS_STD_STRING((String)linkerSettings["cpp_output_map"]);
+
+            // Utilities
+            auto GenerateLibraries = [](const godot::String& libsSetting, bool noPrefix = false) -> std::string
+            {
+                std::string libs = AS_STD_STRING(libsSetting);
+                if (libs.empty()) return "";
+                if (libs.back() == ';') libs.pop_back();
+                std::vector<std::string> libsArray;
+                size_t start = 0;
+                size_t end = libs.find(';');
+                while (end != std::string::npos)
+                {
+                    libsArray.push_back(libs.substr(start, end - start));
+                    start = end + 1;
+                    end = libs.find(';', start);
+                }
+                libsArray.push_back(libs.substr(start));
+                std::string result;
+                if (noPrefix) for (const auto& lib : libsArray) result += "-l:" + lib + " ";
+                else for (const auto& lib : libsArray) result += "-l" + lib + " ";
+                return result;
+            };
+            auto GenerateLibraryPaths = [](const godot::String& additionalDirs) -> std::string
+            {
+                std::string dirs = AS_STD_STRING(additionalDirs);
+                if (dirs.empty()) return "";
+                if (dirs.back() == ';') dirs.pop_back();
+                std::vector<std::string> dirArray;
+                size_t start = 0;
+                size_t end = dirs.find(';');
+                while (end != std::string::npos)
+                {
+                    dirArray.push_back(dirs.substr(start, end - start));
+                    start = end + 1;
+                    end = dirs.find(';', start);
+                }
+                dirArray.push_back(dirs.substr(start));
+                std::string result;
+                for (const auto& dir : dirArray) result += "-L\"" + dir + "\" ";
+                return result;
+            };
+
+            // Generate Linker Arguments
+            std::string linkerArgument = AS_STD_STRING(String(linkerSettings["cpp_linker_binary"]));
+            linkerArgument += " -o \"" + outputModule + "\" ";
+            if (result.hasDebugInformation && bool(linkerSettings["cpp_debug_symbol"])) linkerArgument += "-ggdb ";
+            linkerArgument += "-Wl,-Map=\"" + outputMap + "\" ";
+            linkerArgument += "-shared ";
+            linkerArgument += "-fPIC ";
+
+            // Machine Architecture
+            if (String(linkerSettings["cpp_machine_architecture"]) == "arm64") linkerArgument += "-arch arm64 ";
+
+            // Add Library Paths
+            linkerArgument += "-L./ ";
+            linkerArgument += "-L\"" + this->libraryPath + "\" ";
+            linkerArgument += "-L\"" + this->jenovaPath + "\" ";
+            linkerArgument += "-L\"" + this->jenovaSDKPath + "\" ";
+            linkerArgument += "-L\"" + this->godotSDKPath + "\" ";
+            linkerArgument += GenerateLibraryPaths(linkerSettings["cpp_extra_library_directories"]);
+
+            // Add Object Files
+            for (const auto& scriptModule : scriptModules)
+            {
+                linkerArgument += "\"" + AS_STD_STRING(scriptModule.scriptObjectFile) + "\" ";
+            }
+
+            // Strip Symbols
+            if (bool(linkerSettings["cpp_strip_symbol"])) linkerArgument += "-Wl,--strip-all ";
+
+            // Add Dependency Path
+            linkerArgument += "-Wl,-rpath,./Jenova ";
+
+            // Add Extra Options
+            linkerArgument += AS_STD_STRING(String(linkerSettings["cpp_extra_linker"])) + " ";
+
+            linkerArgument += GenerateLibraries(linkerSettings["cpp_native_libs"], true);
+            linkerArgument += GenerateLibraries(linkerSettings["cpp_default_libs"]);
+            linkerArgument += GenerateLibraries(linkerSettings["cpp_extra_libs"]);
+
+            // Dump Linker Command If Developer Mode Enabled
+            if (jenova::GlobalStorage::DeveloperModeActivated) jenova::WriteStdStringToFile(this->jenovaCachePath + "LinkerCommand.txt", linkerArgument);
+        
+
+            // Run Linker Command Using Process Management
+            int pipefd[2];
+            if (pipe(pipefd) == -1)
+            {
+                result.buildResult = false;
+                result.hasError = true;
+                result.buildError = "L667 : Failed to create pipe for linking process.";
+                return result;
+            }
+
+            pid_t pid = fork();
+            if (pid == -1)
+            {
+                close(pipefd[0]);
+                close(pipefd[1]);
+                result.buildResult = false;
+                result.hasError = true;
+                result.buildError = "L668 : Failed to fork process for linking.";
+                return result;
+            }
+
+            if (pid == 0)
+            {
+                // Child process: Redirect output to pipe
+                dup2(pipefd[1], STDOUT_FILENO);
+                dup2(pipefd[1], STDERR_FILENO);
+                close(pipefd[0]); // Close unused read end
+                close(pipefd[1]);
+
+                // Execute linker command
+                setenv("LANG", "C.UTF-8", 1);
+                setenv("LC_ALL", "C.UTF-8", 1);
+                execl("/bin/sh", "sh", "-c", linkerArgument.c_str(), nullptr);
+
+                // If execl fails
+                _exit(127);
+            }
+            else
+            {
+                // Parent process: Capture output
+                close(pipefd[1]); // Close unused write end
+                char buffer[128];
+                std::string resultOutput;
+
+                // Read output from the pipe
+                ssize_t bytesRead;
+                while ((bytesRead = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0)
+                {
+                    buffer[bytesRead] = '\0';
+                    resultOutput += buffer;
+                }
+                close(pipefd[0]); // Close the read end
+
+                // Wait for the child process to finish
+                int status;
+                waitpid(pid, &status, 0);
+                result.buildResult = WIFEXITED(status) ? (WEXITSTATUS(status) == 0) : false;
+                result.hasError = !result.buildResult;
+
+                // Log the linker output
+                if (!resultOutput.empty())
+                {
+                    // Replace UTF-8 Smart Quotes With ASCII Equivalents
+                    std::string sanitized;
+                    for (size_t i = 0; i < resultOutput.size(); i++)
+                    {
+                        if (i + 2 < resultOutput.size() && static_cast<unsigned char>(resultOutput[i]) == 0xE2 && static_cast<unsigned char>(resultOutput[i + 1]) == 0x80)
+                        {
+                            if (static_cast<unsigned char>(resultOutput[i + 2]) == 0x98 || static_cast<unsigned char>(resultOutput[i + 2]) == 0x99)
+                            {
+                                sanitized += '\'';
+                                i += 2;
+                                continue;
+                            }
+                        }
+                        sanitized += resultOutput[i];
+                    }
+                    jenova::Error("Jenova Linker", "Linker Error: %s", sanitized.c_str());
+                }
+                if (!result.buildResult)
+                {
+                    result.hasError = true;
+                    result.buildError = AS_GD_STRING(resultOutput);
+                    return result;
+                }
+            }
+
+            // Read Module to Buffer
+            std::ifstream moduleReader(outputModule, std::ios::binary);
+            result.builtModuleData = std::vector<uint8_t>(std::istreambuf_iterator<char>(moduleReader), {});
+
+            // Validate Module Buffer
+            if (result.builtModuleData.empty())
+            {
+                result.buildResult = false;
+                result.hasError = true;
+                result.buildError = "L670 : Invalid Module Data.";
+                return result;
+            }
+
+            // Generate Function Information
+            std::string funcInfoCmd = R"(gdb -q -batch -ex "set logging file "%FUNC_INFO_FILE%"" -ex "set logging on" -ex "info functions" -ex "quit" "%BINARY%" > /dev/null 2>&1)";
+            jenova::ReplaceAllMatchesWithString(funcInfoCmd, "%FUNC_INFO_FILE%", AS_STD_STRING(jenova::GetJenovaCacheDirectory()) + std::filesystem::path(outputMap).stem().string() + ".finfo");
+            jenova::ReplaceAllMatchesWithString(funcInfoCmd, "%BINARY%", outputModule);
+            if (jenova::ExecuteCommand(std::string(), funcInfoCmd) != 0)
+            {
+                result.buildResult = false;
+                result.hasError = true;
+                result.buildError = "L850 : Failed to Extract Module Function Information.";
+                return result;
+            }
+
+            // Generate Variable Information
+            std::string varInfoCmd = R"(gdb -q -batch -ex "set logging file "%VAR_INFO_FILE%"" -ex "set logging on" -ex "info variables" -ex "quit" "%BINARY%" > /dev/null 2>&1)";
+            jenova::ReplaceAllMatchesWithString(varInfoCmd, "%VAR_INFO_FILE%", AS_STD_STRING(jenova::GetJenovaCacheDirectory()) + std::filesystem::path(outputMap).stem().string() + ".pinfo");
+            jenova::ReplaceAllMatchesWithString(varInfoCmd, "%BINARY%", outputModule);
+            if (jenova::ExecuteCommand(std::string(), varInfoCmd) != 0)
+            {
+                result.buildResult = false;
+                result.hasError = true;
+                result.buildError = "L860 : Failed to Extract Module Variable Information.";
+                return result;
+            }
+
+            // Generate Metadata
+            result.moduleMetaData = JenovaInterpreter::GenerateModuleMetadata(outputMap, scriptModules, result);
+            if (result.moduleMetaData.empty())
+            {
+                result.buildResult = false;
+                result.hasError = true;
+                result.buildError = "L671 : Failed to Generate Module Metadata.";
+                return result;
+            }
+
+            // Generate Build Cache
+            if (!jenova::CreateBuildCacheDatabase(this->jenovaCachePath + jenova::GlobalSettings::JenovaBuildCacheDatabaseFile, scriptModules, linkerSettings["CppHeaderFiles"]))
+            {
+                result.buildResult = false;
+                result.hasError = true;
+                result.buildError = "L672 : Failed to Generate Build Cache Database.";
+                return result;
+            }
+
+            // Return Final Result
+            return result;
+        }
+        bool SetCompilerOption(const String& optName, const Variant& optValue)
+        {
+            internalDefaultSettings[optName] = optValue;
+            return true;
+        }
+        Variant GetCompilerOption(const String& optName) const
+        {
+            if (internalDefaultSettings.has(optName)) return internalDefaultSettings[optName];
+            return Variant();
+        }
+        Variant ExecuteCommand(const String& commandName, const Dictionary& commandSettings)
+        {
+            // Process Commands
+            if (commandName == "Solve-Compiler-Settings")
+            {
+                return SolveCompilerSettings(internalDefaultSettings);
+            }
+
+            // Invalid Command
+            return Variant::NIL;
+        }
+        CompilerFeatures GetCompilerFeatures() const
+        {
+            return CanCompileFromFile | CanGenerateMappingData | CanGenerateModule | CanLinkObjectFiles;
         }
         bool SolveCompilerSettings(const Dictionary& compilerSettings) override
         {

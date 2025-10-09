@@ -1172,7 +1172,7 @@ jenova::SerializedData JenovaInterpreter::GenerateModuleMetadata(const std::stri
             jenova::json_t serializer;
 
             // Generate Extra Paths
-            std::string moduleFilePath = buildResult.buildPath + "Jenova.Module.so";
+            std::string moduleFilePath = buildResult.buildPath + "Jenova.Module.dylib";
             std::string funcInfoFilePath = AS_STD_STRING(jenova::GetJenovaCacheDirectory()) + std::filesystem::path(mapFilePath).stem().string() + ".finfo";
             std::string propInfoFilePath = AS_STD_STRING(jenova::GetJenovaCacheDirectory()) + std::filesystem::path(mapFilePath).stem().string() + ".pinfo";
 
@@ -1534,7 +1534,7 @@ jenova::SerializedData JenovaInterpreter::GenerateModuleMetadata(const std::stri
             jenova::json_t serializer;
 
             // Generate Extra Paths
-            std::string moduleFilePath = buildResult.buildPath + "Jenova.Module.so";
+            std::string moduleFilePath = buildResult.buildPath + "Jenova.Module.dylib";
             std::string funcInfoFilePath = AS_STD_STRING(jenova::GetJenovaCacheDirectory()) + std::filesystem::path(mapFilePath).stem().string() + ".finfo";
             std::string propInfoFilePath = AS_STD_STRING(jenova::GetJenovaCacheDirectory()) + std::filesystem::path(mapFilePath).stem().string() + ".pinfo";
 
