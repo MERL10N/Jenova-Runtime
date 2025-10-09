@@ -1772,7 +1772,7 @@ namespace jenova
 
 						// Verbose
 						jenova::Output("Script Module [[color=#70a9d4]%s[/color]] [[color=#91b553]%s[/color]] [%s] Compiled, Compile Time : [color=#c8e38a]%f ms[/color]",
-							AS_C_STRING(scriptModule.scriptFilename), AS_C_STRING(scriptModule.scriptUID),
+					  		AS_C_STRING(scriptModule.scriptFilename), AS_C_STRING(scriptModule.scriptUID),
 							scriptModule.scriptType == jenova::ScriptModuleType::UsedScript ? "[color=#24ed49]Used[/color]" : "[color=#ed2456]Unused[/color]",
 							JenovaTinyProfiler::GetCheckpointTimeAndDispose("JenovaCompileST"));
 					}
@@ -3417,10 +3417,52 @@ namespace jenova
 				auto compilerPackages = jenova::GetInstalledCompilerPackages(compilerModel);
 				auto godotKitPackages = jenova::GetInstalledGodotKitPackages();
 
+				 // macOS: detect system Apple Clang if no packaged compiler found
+                #ifdef TARGET_PLATFORM_MACOS
+                bool systemClangDetected = false;
+                String systemClangPath;
+                if (compilerModel == jenova::CompilerModel::AppleClangCompiler && compilerPackages.size() == 0)
+                {
+                    // Try xcrun first
+                    {
+                        FILE* p = popen("xcrun -f clang 2>/dev/null", "r");
+                        if (p)
+                        {
+                            char buf[512] = {0};
+                            if (fgets(buf, sizeof(buf), p))
+                            {
+                                systemClangPath = String(buf).strip_edges();
+                                if (FileAccess::file_exists(systemClangPath))
+                                    systemClangDetected = true;
+                            }
+                            pclose(p);
+                        }
+                    }
+                    // Fallback to /usr/bin/clang
+                    if (!systemClangDetected && FileAccess::file_exists("/usr/bin/clang"))
+                    {
+                        systemClangPath = "/usr/bin/clang";
+                        systemClangDetected = true;
+                    }
+                    if (systemClangDetected)
+                    {
+                        // Just inform – do not warn
+                        jenova::Output("System Apple Clang detected at %s (no packaged toolchain).", AS_C_STRING(systemClangPath));
+                    }
+                }
+                #endif
+
 				// Validate Compiler & GodotKit Packages
 				if (compilerPackages.size() == 0)
 				{
-					jenova::Warning("Jenova Build Configurer", "No Compiler for Selected Compiler Model Detected On Build System, Install At Least One From Package Manager!");
+					  #ifdef TARGET_PLATFORM_MACOS
+                    if (!(compilerModel == jenova::CompilerModel::AppleClangCompiler && systemClangDetected))
+                    {
+                        jenova::Warning("Jenova Build Configurer", "No Compiler for Selected Compiler Model Detected On Build System, Install One From Package Manager!");
+                    }
+                    #else
+                    jenova::Warning("Jenova Build Configurer", "No Compiler for Selected Compiler Model Detected On Build System, Install One From Package Manager!");
+                    #endif
 				}
 				if (godotKitPackages.size() == 0)
 				{
@@ -3487,6 +3529,13 @@ namespace jenova
 				compiler_selector->add_theme_color_override("font_color", editor_theme->get_color("accent_color", "Editor"));
 				for (const auto& compilerPackage : compilerPackages) compiler_selector->add_item(" " + compilerPackage.pkgDestination.get_file());
 				if(compilerPackages.size() != 0) compiler_selector->add_item(" Latest");
+				#ifdef TARGET_PLATFORM_MACOS
+                if (compilerPackages.size() == 0 && systemClangDetected && compilerModel == jenova::CompilerModel::AppleClangCompiler)
+                {
+                    // Add synthetic system toolchain entry
+                    compiler_selector->add_item(" SystemAppleClang");
+                }
+                #endif
 				if (compilerPackages.size() == 0) compiler_selector->add_item(" No Compiler Detected");
 				if (compilerPackages.size() == 0) compiler_selector->set_disabled(true);
 				compiler_selector->select(compiler_selector->get_item_count() - 1);
